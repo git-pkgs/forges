@@ -3,6 +3,7 @@ package forges
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -99,14 +100,8 @@ func (f *bitbucketForge) getJSON(ctx context.Context, url string, v any) error {
 	return json.NewDecoder(resp.Body).Decode(v)
 }
 
-func (f *bitbucketForge) FetchRepository(ctx context.Context, owner, repo string) (*Repository, error) {
-	url := fmt.Sprintf("%s/repositories/%s/%s", bitbucketAPI, owner, repo)
-	var bb bbRepository
-	if err := f.getJSON(ctx, url, &bb); err != nil {
-		return nil, err
-	}
-
-	result := &Repository{
+func convertBitbucketRepo(bb bbRepository) Repository {
+	result := Repository{
 		FullName:    bb.FullName,
 		Name:        bb.Slug,
 		Description: bb.Description,
@@ -139,7 +134,49 @@ func (f *bitbucketForge) FetchRepository(ctx context.Context, owner, repo string
 		result.UpdatedAt = t
 	}
 
-	return result, nil
+	return result
+}
+
+func (f *bitbucketForge) FetchRepository(ctx context.Context, owner, repo string) (*Repository, error) {
+	url := fmt.Sprintf("%s/repositories/%s/%s", bitbucketAPI, owner, repo)
+	var bb bbRepository
+	if err := f.getJSON(ctx, url, &bb); err != nil {
+		return nil, err
+	}
+
+	result := convertBitbucketRepo(bb)
+	return &result, nil
+}
+
+type bbReposResponse struct {
+	Values []bbRepository `json:"values"`
+	Next   string         `json:"next"`
+}
+
+func (f *bitbucketForge) ListRepositories(ctx context.Context, owner string, opts ListOptions) ([]Repository, error) {
+	perPage := opts.PerPage
+	if perPage <= 0 {
+		perPage = 100
+	}
+
+	var all []Repository
+	url := fmt.Sprintf("%s/repositories/%s?pagelen=%d", bitbucketAPI, owner, perPage)
+
+	for url != "" {
+		var page bbReposResponse
+		if err := f.getJSON(ctx, url, &page); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return nil, ErrOwnerNotFound
+			}
+			return nil, err
+		}
+		for _, bb := range page.Values {
+			all = append(all, convertBitbucketRepo(bb))
+		}
+		url = page.Next
+	}
+
+	return FilterRepos(all, opts), nil
 }
 
 func (f *bitbucketForge) FetchTags(ctx context.Context, owner, repo string) ([]Tag, error) {

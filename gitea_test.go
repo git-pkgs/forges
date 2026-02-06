@@ -111,6 +111,94 @@ func TestGiteaFetchRepositoryNotFound(t *testing.T) {
 	}
 }
 
+func TestGiteaListRepositories(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/version", giteaVersionHandler)
+	mux.HandleFunc("GET /api/v1/orgs/testorg/repos", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{
+				"full_name":      "testorg/repo-a",
+				"name":           "repo-a",
+				"html_url":       "https://codeberg.org/testorg/repo-a",
+				"default_branch": "main",
+				"fork":           false,
+				"archived":       false,
+				"private":        false,
+				"stars_count":    10,
+				"owner":          map[string]any{"login": "testorg"},
+				"created_at":     time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+				"updated_at":     time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+			},
+			{
+				"full_name":      "testorg/repo-b",
+				"name":           "repo-b",
+				"html_url":       "https://codeberg.org/testorg/repo-b",
+				"default_branch": "main",
+				"fork":           true,
+				"archived":       false,
+				"private":        false,
+				"stars_count":    5,
+				"owner":          map[string]any{"login": "testorg"},
+				"created_at":     time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+				"updated_at":     time.Date(2024, 5, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+			},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	f := newGiteaForge(srv.URL, "test-token", nil)
+
+	repos, err := f.ListRepositories(context.Background(), "testorg", ListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("expected 2 repos, got %d", len(repos))
+	}
+	assertEqual(t, "repos[0].FullName", "testorg/repo-a", repos[0].FullName)
+	assertEqual(t, "repos[1].FullName", "testorg/repo-b", repos[1].FullName)
+}
+
+func TestGiteaListRepositoriesFallbackToUser(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/version", giteaVersionHandler)
+	mux.HandleFunc("GET /api/v1/orgs/someuser/repos", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	mux.HandleFunc("GET /api/v1/users/someuser/repos", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{
+				"full_name":      "someuser/personal",
+				"name":           "personal",
+				"html_url":       "https://codeberg.org/someuser/personal",
+				"default_branch": "main",
+				"fork":           false,
+				"archived":       false,
+				"private":        false,
+				"owner":          map[string]any{"login": "someuser"},
+				"created_at":     time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+				"updated_at":     time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+			},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	f := newGiteaForge(srv.URL, "", nil)
+
+	repos, err := f.ListRepositories(context.Background(), "someuser", ListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("expected 1 repo, got %d", len(repos))
+	}
+	assertEqual(t, "repos[0].FullName", "someuser/personal", repos[0].FullName)
+}
+
 func TestGiteaFetchTags(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/version", giteaVersionHandler)

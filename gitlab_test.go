@@ -92,6 +92,85 @@ func TestGitLabFetchRepositoryNotFound(t *testing.T) {
 	}
 }
 
+func TestGitLabListRepositories(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v4/groups/mygroup/projects", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{
+				"path_with_namespace": "mygroup/project-a",
+				"name":               "project-a",
+				"default_branch":     "main",
+				"archived":           false,
+				"visibility":         "public",
+				"namespace":          map[string]any{"path": "mygroup"},
+				"created_at":         time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+				"last_activity_at":   time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+			},
+			{
+				"path_with_namespace": "mygroup/project-b",
+				"name":               "project-b",
+				"default_branch":     "develop",
+				"archived":           true,
+				"visibility":         "private",
+				"namespace":          map[string]any{"path": "mygroup"},
+				"created_at":         time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+				"last_activity_at":   time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+			},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	f := newGitLabForge(srv.URL, "test-token", nil)
+
+	repos, err := f.ListRepositories(context.Background(), "mygroup", ListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("expected 2 repos, got %d", len(repos))
+	}
+	assertEqual(t, "repos[0].FullName", "mygroup/project-a", repos[0].FullName)
+	assertEqual(t, "repos[1].FullName", "mygroup/project-b", repos[1].FullName)
+	assertEqualBool(t, "repos[1].Archived", true, repos[1].Archived)
+}
+
+func TestGitLabListRepositoriesFallbackToUser(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v4/groups/someuser/projects", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"message": "404 Group Not Found"})
+	})
+	mux.HandleFunc("GET /api/v4/users/someuser/projects", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{
+				"path_with_namespace": "someuser/personal",
+				"name":               "personal",
+				"default_branch":     "main",
+				"archived":           false,
+				"visibility":         "public",
+				"namespace":          map[string]any{"path": "someuser"},
+				"created_at":         time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+			},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	f := newGitLabForge(srv.URL, "", nil)
+
+	repos, err := f.ListRepositories(context.Background(), "someuser", ListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("expected 1 repo, got %d", len(repos))
+	}
+	assertEqual(t, "repos[0].FullName", "someuser/personal", repos[0].FullName)
+}
+
 func TestGitLabFetchTags(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v4/projects/mygroup%2Fmyrepo/repository/tags", func(w http.ResponseWriter, r *http.Request) {

@@ -107,6 +107,74 @@ func TestBitbucketFetchRepositoryNotFound(t *testing.T) {
 	}
 }
 
+func TestBitbucketListRepositories(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /2.0/repositories/atlassian", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"values": []bbRepository{
+				{
+					Slug:     "repo-a",
+					FullName: "atlassian/repo-a",
+					Language: "java",
+					Owner: &struct {
+						Username    string `json:"username"`
+						DisplayName string `json:"display_name"`
+					}{Username: "atlassian"},
+				},
+				{
+					Slug:     "repo-b",
+					FullName: "atlassian/repo-b",
+					Language: "python",
+					Owner: &struct {
+						Username    string `json:"username"`
+						DisplayName string `json:"display_name"`
+					}{Username: "atlassian"},
+				},
+			},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	origAPI := bitbucketAPI
+	defer func() { setBitbucketAPI(origAPI) }()
+	setBitbucketAPI(srv.URL + "/2.0")
+
+	f := newBitbucketForge("test-token", nil)
+
+	repos, err := f.ListRepositories(context.Background(), "atlassian", ListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("expected 2 repos, got %d", len(repos))
+	}
+	assertEqual(t, "repos[0].FullName", "atlassian/repo-a", repos[0].FullName)
+	assertEqual(t, "repos[1].FullName", "atlassian/repo-b", repos[1].FullName)
+}
+
+func TestBitbucketListRepositoriesNotFound(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /2.0/repositories/nonexistent", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	origAPI := bitbucketAPI
+	defer func() { setBitbucketAPI(origAPI) }()
+	setBitbucketAPI(srv.URL + "/2.0")
+
+	f := newBitbucketForge("", nil)
+
+	_, err := f.ListRepositories(context.Background(), "nonexistent", ListOptions{})
+	if err != ErrOwnerNotFound {
+		t.Fatalf("expected ErrOwnerNotFound, got %v", err)
+	}
+}
+
 func TestBitbucketFetchTags(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /2.0/repositories/atlassian/myrepo/refs/tags", func(w http.ResponseWriter, r *http.Request) {

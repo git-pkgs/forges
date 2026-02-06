@@ -45,6 +45,31 @@ type Repository struct {
 	PushedAt            time.Time `json:"pushed_at,omitzero"`
 }
 
+// ArchivedFilter controls how archived repositories are handled in list operations.
+type ArchivedFilter int
+
+const (
+	ArchivedInclude ArchivedFilter = iota
+	ArchivedExclude
+	ArchivedOnly
+)
+
+// ForkFilter controls how forked repositories are handled in list operations.
+type ForkFilter int
+
+const (
+	ForkInclude ForkFilter = iota
+	ForkExclude
+	ForkOnly
+)
+
+// ListOptions configures a ListRepositories call.
+type ListOptions struct {
+	Archived ArchivedFilter
+	Forks    ForkFilter
+	PerPage  int
+}
+
 // Tag represents a git tag.
 type Tag struct {
 	Name   string `json:"name"`

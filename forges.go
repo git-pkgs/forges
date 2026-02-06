@@ -14,6 +14,9 @@ import (
 // ErrNotFound is returned when the requested repository does not exist.
 var ErrNotFound = errors.New("repository not found")
 
+// ErrOwnerNotFound is returned when the requested owner (org or user) does not exist.
+var ErrOwnerNotFound = errors.New("owner not found")
+
 // HTTPError represents a non-OK HTTP response from a forge API.
 type HTTPError struct {
 	StatusCode int
@@ -29,6 +32,7 @@ func (e *HTTPError) Error() string {
 type Forge interface {
 	FetchRepository(ctx context.Context, owner, repo string) (*Repository, error)
 	FetchTags(ctx context.Context, owner, repo string) ([]Tag, error)
+	ListRepositories(ctx context.Context, owner string, opts ListOptions) ([]Repository, error)
 }
 
 // Client routes requests to the appropriate Forge based on the URL domain.
@@ -127,6 +131,11 @@ func (c *Client) forgeFor(domain string) (Forge, error) {
 	return f, nil
 }
 
+// ForgeFor returns the Forge implementation registered for the given domain.
+func (c *Client) ForgeFor(domain string) (Forge, error) {
+	return c.forgeFor(domain)
+}
+
 // FetchRepository fetches normalized repository metadata from a URL string.
 func (c *Client) FetchRepository(ctx context.Context, repoURL string) (*Repository, error) {
 	domain, owner, repo, err := ParseRepoURL(repoURL)
@@ -161,6 +170,45 @@ func (c *Client) FetchTags(ctx context.Context, repoURL string) ([]Tag, error) {
 		return nil, err
 	}
 	return f.FetchTags(ctx, owner, repo)
+}
+
+// ListRepositories lists all repositories for an owner on the given domain.
+func (c *Client) ListRepositories(ctx context.Context, domain, owner string, opts ListOptions) ([]Repository, error) {
+	f, err := c.forgeFor(domain)
+	if err != nil {
+		return nil, err
+	}
+	return f.ListRepositories(ctx, owner, opts)
+}
+
+// FilterRepos applies archived and fork filters to a slice of repositories.
+func FilterRepos(repos []Repository, opts ListOptions) []Repository {
+	n := 0
+	for _, r := range repos {
+		switch opts.Archived {
+		case ArchivedExclude:
+			if r.Archived {
+				continue
+			}
+		case ArchivedOnly:
+			if !r.Archived {
+				continue
+			}
+		}
+		switch opts.Forks {
+		case ForkExclude:
+			if r.Fork {
+				continue
+			}
+		case ForkOnly:
+			if !r.Fork {
+				continue
+			}
+		}
+		repos[n] = r
+		n++
+	}
+	return repos[:n]
 }
 
 // FetchTagsFromPURL fetches git tags using a PURL's repository_url qualifier.

@@ -25,16 +25,8 @@ func newGitHubForgeWithBase(baseURL, token string, hc *http.Client) *gitHubForge
 	return &gitHubForge{client: c}
 }
 
-func (f *gitHubForge) FetchRepository(ctx context.Context, owner, repo string) (*Repository, error) {
-	r, resp, err := f.client.Repositories.Get(ctx, owner, repo)
-	if err != nil {
-		if resp != nil && resp.StatusCode == http.StatusNotFound {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-
-	result := &Repository{
+func convertGitHubRepo(r *github.Repository) Repository {
+	result := Repository{
 		FullName:            r.GetFullName(),
 		Owner:               r.GetOwner().GetLogin(),
 		Name:                r.GetName(),
@@ -79,7 +71,86 @@ func (f *gitHubForge) FetchRepository(ctx context.Context, owner, repo string) (
 		result.PushedAt = t.Time
 	}
 
-	return result, nil
+	return result
+}
+
+func (f *gitHubForge) FetchRepository(ctx context.Context, owner, repo string) (*Repository, error) {
+	r, resp, err := f.client.Repositories.Get(ctx, owner, repo)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+
+	result := convertGitHubRepo(r)
+	return &result, nil
+}
+
+func (f *gitHubForge) ListRepositories(ctx context.Context, owner string, opts ListOptions) ([]Repository, error) {
+	perPage := opts.PerPage
+	if perPage <= 0 {
+		perPage = 100
+	}
+
+	// Try org endpoint first, fall back to user on 404.
+	repos, err := f.listOrgRepos(ctx, owner, perPage)
+	if err != nil {
+		repos, err = f.listUserRepos(ctx, owner, perPage)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return FilterRepos(repos, opts), nil
+}
+
+func (f *gitHubForge) listOrgRepos(ctx context.Context, owner string, perPage int) ([]Repository, error) {
+	var all []Repository
+	ghOpts := &github.RepositoryListByOrgOptions{
+		ListOptions: github.ListOptions{PerPage: perPage},
+	}
+	for {
+		ghRepos, resp, err := f.client.Repositories.ListByOrg(ctx, owner, ghOpts)
+		if err != nil {
+			if resp != nil && resp.StatusCode == http.StatusNotFound {
+				return nil, ErrOwnerNotFound
+			}
+			return nil, err
+		}
+		for _, r := range ghRepos {
+			all = append(all, convertGitHubRepo(r))
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		ghOpts.Page = resp.NextPage
+	}
+	return all, nil
+}
+
+func (f *gitHubForge) listUserRepos(ctx context.Context, owner string, perPage int) ([]Repository, error) {
+	var all []Repository
+	ghOpts := &github.RepositoryListByUserOptions{
+		ListOptions: github.ListOptions{PerPage: perPage},
+	}
+	for {
+		ghRepos, resp, err := f.client.Repositories.ListByUser(ctx, owner, ghOpts)
+		if err != nil {
+			if resp != nil && resp.StatusCode == http.StatusNotFound {
+				return nil, ErrOwnerNotFound
+			}
+			return nil, err
+		}
+		for _, r := range ghRepos {
+			all = append(all, convertGitHubRepo(r))
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		ghOpts.Page = resp.NextPage
+	}
+	return all, nil
 }
 
 func (f *gitHubForge) FetchTags(ctx context.Context, owner, repo string) ([]Tag, error) {

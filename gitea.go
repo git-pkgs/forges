@@ -23,16 +23,8 @@ func newGiteaForge(baseURL, token string, hc *http.Client) *giteaForge {
 	return &giteaForge{client: c}
 }
 
-func (f *giteaForge) FetchRepository(ctx context.Context, owner, repo string) (*Repository, error) {
-	r, resp, err := f.client.GetRepo(owner, repo)
-	if err != nil {
-		if resp != nil && resp.StatusCode == http.StatusNotFound {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-
-	result := &Repository{
+func convertGiteaRepo(r *gitea.Repository) Repository {
+	result := Repository{
 		FullName:            r.FullName,
 		Owner:               r.Owner.UserName,
 		Name:                r.Name,
@@ -63,13 +55,93 @@ func (f *giteaForge) FetchRepository(ctx context.Context, owner, repo string) (*
 		result.SourceName = r.Parent.FullName
 	}
 
-	// Fetch topics separately
+	return result
+}
+
+func (f *giteaForge) FetchRepository(ctx context.Context, owner, repo string) (*Repository, error) {
+	r, resp, err := f.client.GetRepo(owner, repo)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+
+	result := convertGiteaRepo(r)
+
+	// Fetch topics separately (not included in main repo response)
 	topics, _, topicErr := f.client.ListRepoTopics(owner, repo, gitea.ListRepoTopicsOptions{})
 	if topicErr == nil {
 		result.Topics = topics
 	}
 
-	return result, nil
+	return &result, nil
+}
+
+func (f *giteaForge) ListRepositories(ctx context.Context, owner string, opts ListOptions) ([]Repository, error) {
+	perPage := opts.PerPage
+	if perPage <= 0 {
+		perPage = 50
+	}
+
+	// Try org endpoint first, fall back to user on 404.
+	repos, err := f.listOrgRepos(ctx, owner, perPage)
+	if err != nil {
+		repos, err = f.listUserRepos(ctx, owner, perPage)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return FilterRepos(repos, opts), nil
+}
+
+func (f *giteaForge) listOrgRepos(_ context.Context, owner string, perPage int) ([]Repository, error) {
+	var all []Repository
+	page := 1
+	for {
+		gRepos, resp, err := f.client.ListOrgRepos(owner, gitea.ListOrgReposOptions{
+			ListOptions: gitea.ListOptions{Page: page, PageSize: perPage},
+		})
+		if err != nil {
+			if resp != nil && resp.StatusCode == http.StatusNotFound {
+				return nil, ErrOwnerNotFound
+			}
+			return nil, err
+		}
+		for _, r := range gRepos {
+			all = append(all, convertGiteaRepo(r))
+		}
+		if len(gRepos) < perPage {
+			break
+		}
+		page++
+	}
+	return all, nil
+}
+
+func (f *giteaForge) listUserRepos(_ context.Context, owner string, perPage int) ([]Repository, error) {
+	var all []Repository
+	page := 1
+	for {
+		gRepos, resp, err := f.client.ListUserRepos(owner, gitea.ListReposOptions{
+			ListOptions: gitea.ListOptions{Page: page, PageSize: perPage},
+		})
+		if err != nil {
+			if resp != nil && resp.StatusCode == http.StatusNotFound {
+				return nil, ErrOwnerNotFound
+			}
+			return nil, err
+		}
+		for _, r := range gRepos {
+			all = append(all, convertGiteaRepo(r))
+		}
+		if len(gRepos) < perPage {
+			break
+		}
+		page++
+	}
+	return all, nil
 }
 
 func (f *giteaForge) FetchTags(ctx context.Context, owner, repo string) ([]Tag, error) {

@@ -131,6 +131,130 @@ func TestGitHubFetchRepositoryNoassertionLicense(t *testing.T) {
 	}
 }
 
+func TestGitHubListRepositories(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v3/orgs/myorg/repos", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]*github.Repository{
+			{
+				FullName: ptr("myorg/repo-a"),
+				Name:     ptr("repo-a"),
+				Owner:    &github.User{Login: ptr("myorg")},
+				Language: ptr("Go"),
+				Archived: ptrBool(false),
+				Fork:     ptrBool(false),
+			},
+			{
+				FullName: ptr("myorg/repo-b"),
+				Name:     ptr("repo-b"),
+				Owner:    &github.User{Login: ptr("myorg")},
+				Language: ptr("Rust"),
+				Archived: ptrBool(true),
+				Fork:     ptrBool(false),
+			},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := github.NewClient(nil)
+	c, _ = c.WithEnterpriseURLs(srv.URL+"/api/v3", srv.URL+"/api/v3")
+	f := &gitHubForge{client: c}
+
+	repos, err := f.ListRepositories(context.Background(), "myorg", ListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("expected 2 repos, got %d", len(repos))
+	}
+	assertEqual(t, "repos[0].FullName", "myorg/repo-a", repos[0].FullName)
+	assertEqual(t, "repos[1].FullName", "myorg/repo-b", repos[1].FullName)
+}
+
+func TestGitHubListRepositoriesFallbackToUser(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v3/orgs/someuser/repos", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Not Found"})
+	})
+	mux.HandleFunc("GET /api/v3/users/someuser/repos", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]*github.Repository{
+			{
+				FullName: ptr("someuser/personal"),
+				Name:     ptr("personal"),
+				Owner:    &github.User{Login: ptr("someuser")},
+				Fork:     ptrBool(false),
+				Archived: ptrBool(false),
+			},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := github.NewClient(nil)
+	c, _ = c.WithEnterpriseURLs(srv.URL+"/api/v3", srv.URL+"/api/v3")
+	f := &gitHubForge{client: c}
+
+	repos, err := f.ListRepositories(context.Background(), "someuser", ListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("expected 1 repo, got %d", len(repos))
+	}
+	assertEqual(t, "repos[0].FullName", "someuser/personal", repos[0].FullName)
+}
+
+func TestGitHubListRepositoriesWithFilters(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v3/orgs/myorg/repos", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]*github.Repository{
+			{
+				FullName: ptr("myorg/active"),
+				Name:     ptr("active"),
+				Owner:    &github.User{Login: ptr("myorg")},
+				Archived: ptrBool(false),
+				Fork:     ptrBool(false),
+			},
+			{
+				FullName: ptr("myorg/archived"),
+				Name:     ptr("archived"),
+				Owner:    &github.User{Login: ptr("myorg")},
+				Archived: ptrBool(true),
+				Fork:     ptrBool(false),
+			},
+			{
+				FullName: ptr("myorg/fork"),
+				Name:     ptr("fork"),
+				Owner:    &github.User{Login: ptr("myorg")},
+				Archived: ptrBool(false),
+				Fork:     ptrBool(true),
+			},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := github.NewClient(nil)
+	c, _ = c.WithEnterpriseURLs(srv.URL+"/api/v3", srv.URL+"/api/v3")
+	f := &gitHubForge{client: c}
+
+	repos, err := f.ListRepositories(context.Background(), "myorg", ListOptions{
+		Archived: ArchivedExclude,
+		Forks:    ForkExclude,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("expected 1 repo, got %d", len(repos))
+	}
+	assertEqual(t, "repos[0].FullName", "myorg/active", repos[0].FullName)
+}
+
 func TestGitHubFetchTags(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v3/repos/octocat/hello-world/tags", func(w http.ResponseWriter, r *http.Request) {

@@ -309,10 +309,71 @@ func TestDetectForgeTypeGitHubAPI(t *testing.T) {
 	}
 }
 
+func TestClientListRepositoriesRoutes(t *testing.T) {
+	mock := &mockForge{
+		repos: []Repository{
+			{FullName: "org/repo-a"},
+			{FullName: "org/repo-b"},
+		},
+	}
+	c := &Client{
+		forges: map[string]Forge{"example.com": mock},
+		tokens: make(map[string]string),
+	}
+
+	repos, err := c.ListRepositories(context.Background(), "example.com", "org", ListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("expected 2 repos, got %d", len(repos))
+	}
+	if mock.lastOwner != "org" {
+		t.Errorf("expected owner=org, got %s", mock.lastOwner)
+	}
+}
+
+func TestFilterRepos(t *testing.T) {
+	repos := []Repository{
+		{FullName: "org/active", Archived: false, Fork: false},
+		{FullName: "org/archived", Archived: true, Fork: false},
+		{FullName: "org/fork", Archived: false, Fork: true},
+		{FullName: "org/archived-fork", Archived: true, Fork: true},
+	}
+
+	tests := []struct {
+		name string
+		opts ListOptions
+		want []string
+	}{
+		{"include all", ListOptions{}, []string{"org/active", "org/archived", "org/fork", "org/archived-fork"}},
+		{"exclude archived", ListOptions{Archived: ArchivedExclude}, []string{"org/active", "org/fork"}},
+		{"only archived", ListOptions{Archived: ArchivedOnly}, []string{"org/archived", "org/archived-fork"}},
+		{"exclude forks", ListOptions{Forks: ForkExclude}, []string{"org/active", "org/archived"}},
+		{"only forks", ListOptions{Forks: ForkOnly}, []string{"org/fork", "org/archived-fork"}},
+		{"exclude both", ListOptions{Archived: ArchivedExclude, Forks: ForkExclude}, []string{"org/active"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Make a copy so we don't mutate across runs
+			input := make([]Repository, len(repos))
+			copy(input, repos)
+			got := FilterRepos(input, tt.opts)
+			var names []string
+			for _, r := range got {
+				names = append(names, r.FullName)
+			}
+			assertSliceEqual(t, "repos", tt.want, names)
+		})
+	}
+}
+
 // Mock forge for routing tests
 
 type mockForge struct {
 	repo      *Repository
+	repos     []Repository
 	tags      []Tag
 	lastOwner string
 	lastRepo  string
@@ -328,4 +389,9 @@ func (m *mockForge) FetchTags(_ context.Context, owner, repo string) ([]Tag, err
 	m.lastOwner = owner
 	m.lastRepo = repo
 	return m.tags, nil
+}
+
+func (m *mockForge) ListRepositories(_ context.Context, owner string, opts ListOptions) ([]Repository, error) {
+	m.lastOwner = owner
+	return m.repos, nil
 }
