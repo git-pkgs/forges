@@ -6,7 +6,7 @@ require (
 	code.gitea.io/sdk/gitea v0.23.2
 	github.com/git-pkgs/purl v0.1.5
 	github.com/google/go-github/v82 v82.0.0
-	gitlab.com/gitlab-org/api/client-go v1.28.0
+	gitlab.com/gitlab-org/api/client-go v1.31.0
 )
 
 require (
